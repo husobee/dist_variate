@@ -13,10 +13,10 @@ JOURNAL OF STATISTICAL COMPUTATION AND SIMULATION,
 ## usage
 
 ```rust
-extern crate randvariate;
+extern crate dist_variate;
 extern crate rand;
 
-use randvariate::h2pec;
+use dist_variate::hgd::h2pec;
 
 
 let mut rng = rand::thread_rng();
