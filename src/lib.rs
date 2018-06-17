@@ -1,7 +1,7 @@
 extern crate rand;
 
 // randvariate - module that provides functions to generate random variates
-mod randvariate {
+pub mod hgd {
     use rand::distributions::{Uniform, Distribution};
     use rand::{ThreadRng, thread_rng};
 
@@ -21,7 +21,7 @@ mod randvariate {
     ///  "COMPUTER GENERATION OF HYPERGEOMETRIC RANDOM VARIATES,"
     ///  JOURNAL OF STATISTICAL COMPUTATION AND SIMULATION,
     ///  22(1985), 2, 1985, 127-145.
-    fn h2pec(kk: u64, nn1: u64, nn2: u64, rng: &mut ThreadRng) -> u64 {
+    pub fn h2pec(kk: u64, nn1: u64, nn2: u64, rng: &mut ThreadRng) -> u64 {
 
         // input validation
         let (n1, n2) = match _validate_input(kk as f64, nn1 as f64, nn2 as f64) {

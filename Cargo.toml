@@ -1,5 +1,5 @@
 [package]
-name = "dist-variate"
+name = "dist_variate"
 version = "0.1.0"
 authors = ["Ben <husobee> Huson <husobee@e-ie.io>"]
 
