@@ -1,9 +1,38 @@
-extern crate rand;
-
+extern crate crypto;
 // randvariate - module that provides functions to generate random variates
 pub mod hgd {
-    use rand::distributions::{Uniform, Distribution};
-    use rand::{ThreadRng, thread_rng};
+
+    use crypto::symmetriccipher::SynchronousStreamCipher;
+
+    pub struct Prng {
+        pub cipher: Box<SynchronousStreamCipher + 'static>,
+    }
+
+    // coins is a bit string...
+    // make sure the bit string is length 32
+    // start with out = 0
+
+    impl Prng {
+        pub fn new(cipher: Box<SynchronousStreamCipher + 'static>) -> Prng {
+            // new takes a derived key, and performs the encryption
+            Prng{
+                cipher: cipher,
+            }
+        }
+
+        pub fn draw(&mut self) -> f64 {
+            let mut coins = vec![0;16];
+            self.cipher.process(&[0;16], &mut coins);
+
+            let s: u32 = (coins[0] as u32) << 24 |
+                (coins[1] as u32) << 16 | (coins[2] as u32) << 8 |
+                (coins[3] as u32);
+
+            let ret = (s as f64)/(u32::max_value() as f64);
+            ret
+        }
+    }
+
 
     const CON:f64 = 57.56462733;
     const DELTAL:f64 = 0.0078;
@@ -21,7 +50,7 @@ pub mod hgd {
     ///  "COMPUTER GENERATION OF HYPERGEOMETRIC RANDOM VARIATES,"
     ///  JOURNAL OF STATISTICAL COMPUTATION AND SIMULATION,
     ///  22(1985), 2, 1985, 127-145.
-    pub fn h2pec(kk: u64, nn1: u64, nn2: u64, rng: &mut ThreadRng) -> u64 {
+    pub fn h2pec(kk: u64, nn1: u64, nn2: u64, rng: &mut Prng) -> u64 {
 
         // input validation
         let (n1, n2) = match _validate_input(kk as f64, nn1 as f64, nn2 as f64) {
@@ -31,12 +60,12 @@ pub mod hgd {
 
         // variable setup
         let tn = n1 + n2;
-        let k = if (kk + kk) as f64 >= tn {
+        let k = if (kk as f64 + kk as f64) >= tn {
             tn - kk as f64
         } else {
             kk as f64
         };
-        let m = (k+1.0) * (n1+1.0) / (tn+2.0);
+        let m = ((k+1.0) * (n1+1.0) / (tn+2.0)).trunc();
 
         let minjx:f64 = if k-n2 < 0.0 {
             0.0
@@ -55,18 +84,18 @@ pub mod hgd {
         } else if m - minjx < 10.0 {
             // inverse transformation
             let w = if k < n2 {
-                (CON + _afc(n2).unwrap() + _afc(n1+n2-k).unwrap()
-                    - _afc(n2-k).unwrap() - _afc(n1+n2).unwrap()).exp()
+                (CON + _afc(n2) + _afc(n1+n2-k)
+                    - _afc(n2-k) - _afc(n1+n2)).exp()
             } else {
-                (CON + _afc(n1).unwrap() + _afc(k).unwrap()
-                    - _afc(k-n2).unwrap() - _afc(n1+n2).unwrap()).exp()
+                (CON + _afc(n1) + _afc(k)
+                    - _afc(k-n2) - _afc(n1+n2)).exp()
             };
 
             let mut lix;
             'label10: loop {
                 let mut p = w;
                 lix = minjx;
-                let mut u = _rand(rng) * SCALE;
+                let mut u = rng.draw() * SCALE;
                 'label20: loop {
                     if u>p {
                         u = u - p;
@@ -90,25 +119,32 @@ pub mod hgd {
             let d = (1.5 * s).trunc() + 0.5;
             let xl = (m - d + 0.5).trunc();
             let xr = (m + d + 0.5).trunc();
-            let a = _afc(m).unwrap() + _afc(n1-m).unwrap() + _afc(k-m).unwrap()
-                + _afc(n2-k+m).unwrap();
-            let expon = a - _afc(xl).unwrap() - _afc(n1-xl).unwrap() 
-                - _afc(k-xl).unwrap() - _afc(n2-k+xl).unwrap();
-            let kl = expon.exp();
-            let kr = (a - _afc(xr-1.0).unwrap() - _afc(n1-xr+1.0).unwrap()
-                      - _afc(k-xr+1.0).unwrap() - _afc(n2-k+xr-1.0).unwrap()).exp();
+
+            let a = _afc(m) + _afc(n1-m) + _afc(k-m)
+                + _afc(n2-k+m);
+
+
+            let kl = (
+                a - _afc(xl)
+                - _afc(n1-xl)
+                - _afc(k-xl) 
+                - _afc(n2-k+xl)).exp();
+
+            let kr = (a - _afc((xr-1.0).trunc()) - _afc((n1-xr+1.0).trunc())
+                      - _afc((k-xr+1.0).trunc()) - _afc((n2-k+xr-1.0).trunc())).exp();
             let lamdl = -1.0 * (xl * (n2 - k + xl)/(n1-xl+1.0)/(k-xl+1.0)).ln();
             let lamdr = -1.0 * ((n1-xr+1.0) * (k-xr+1.0)/xr/(n2-k+xr)).ln();
 
-            let p1 = 2.0*d;
+            let p1 = d+d;
             let p2 = p1 + kl / lamdl;
             let p3 = p2 + kr / lamdr;
 
 
+            let mut reject = true;
+
             'label30: loop {
-                let mut reject = true;
-                let mut u = _rand(rng) * p3;
-                let mut v = _rand(rng);
+                let mut u = rng.draw() * p3;
+                let mut v = rng.draw();
 
                 if u < p1 {
                     // rect region
@@ -134,16 +170,15 @@ pub mod hgd {
                         let mut i = m+1.0;
                         while i < lix {
                             f = f * (n1 - i + 1.0) * (k - i + 1.0)
-                                / (n1 - i) / (k-i);
+                                / (n2 - k + i) / i;
                             i+=1.0;
                         }
                     } else if  m > lix  {
                         let mut i = lix+1.0;
                         while i < m {
-                            f = f * i * (n2 - k + i) * (n1 - i) / (k-i);
+                            f = f * i * (n2 - k + i) / (n1 - i) / (k-i);
                             i+=1.0;
                         }
-
                     }
                     if v <= f {
                         reject = false;
@@ -159,7 +194,7 @@ pub mod hgd {
                     let r = -1.0 * ym / y1;
                     let s = ym / yn;
                     let t = ym / yk;
-                    let e = -1.0 * t;
+                    let e = -1.0 * ym / nk;
                     let g = yn * yk / (y1 * nk) - 1.0;
                     let dg = if g < 0.0 {
                         1.0 + g
@@ -204,7 +239,7 @@ pub mod hgd {
                             reject = false;
 
                         } else {
-                            if alv <= (a - _afc(lix).unwrap() - _afc(n1-lix).unwrap() - _afc(k-lix).unwrap() - _afc(n2 - k + lix).unwrap() ) {
+                            if alv <= (a - _afc(lix) - _afc(n1-lix) - _afc(k-lix) - _afc(n2 - k + lix) ) {
                                 reject = false;
                             } else {
                                 reject = true;
@@ -239,8 +274,12 @@ pub mod hgd {
 
     #[test]
     fn _test_h2pec() {
-        let mut rng = thread_rng();
-        let _jx = h2pec(10, 100, 100, &mut rng);
+        let seed: Vec<u8> = vec![0, 0, 0, 42];
+        let mut rng = Prng::new(&seed);
+        let M = u32::max_value() as u64;
+        let N = u64::max_value();
+        let y = 0.0 + ((M as f64)/2.0).ceil();
+        let jx = h2pec(y as u64, M, N-M, &mut rng);
     }
 
 
@@ -288,46 +327,212 @@ pub mod hgd {
     // _afc -
     // Function to evaluate logarithm of the factorial i.
     // if i >= 7 use stirling's approximation
-    fn _afc(i: f64) -> Option<f64> {
-        if i < 0.0 {
-            None
-        } else {
-            // if lte 7 use computed table
-            match i.round() as u64 {
-                0 => Some(0.0),
-                1 => Some(0.0),
-                2 => Some(0.6931471806),
-                3 => Some(1.791759469),
-                4 => Some(3.178053830),
-                5 => Some(4.787491743),
-                6 => Some(6.579251212),
-                7 => Some(8.525161361),
-                _ => Some(
-                    (i+0.5) * i.ln() - i + 0.08333333333333/i
-                    -0.00277777777777/i/i/i + 0.9189385332)
-            }
+    fn _afc(i: f64) -> f64 {
+        // if lte 7 use computed table
+        match i.round() as u64 {
+            0 => 0.0,
+            1 => 0.0,
+            2 => 0.6931471806,
+            3 => 1.791759469,
+            4 => 3.178053830,
+            5 => 4.787491743,
+            6 => 6.579251212,
+            7 => 8.525161361,
+            _ => (i+0.5) * i.ln() - i + 0.08333333333333/i
+                -0.00277777777777/i/i/i + 0.9189385332
         }
     }
 
     #[test]
     fn _test_afc() {
-        assert_eq!(_afc(1.0).unwrap(), 0.0);
-        assert_eq!(_afc(7.0).unwrap(), 8.525161361);
-        assert_eq!(_afc(8.0).unwrap(), 10.604602878798048);
+        assert_eq!(_afc(1.0), 0.0);
+        assert_eq!(_afc(7.0), 8.525161361);
+        assert_eq!(_afc(8.0), 10.604602878798048);
     }
 
 
+
+
+    pub fn rhyper(kk:u64, nn1:u64, nn2:u64, prng: &mut Prng) -> u64 {
+        if kk > 10 {
+            hrua(kk, nn1, nn2, prng)
+        } else {
+            hyp(kk, nn1, nn2, prng)
+        }
+    }
+
+    use std::cmp;
+
+    fn hyp(kk:u64, nn1:u64, nn2:u64, prng: &mut Prng) -> u64 {
+        let d1 = nn2 + nn1 - kk;
+        let d2 = cmp::min(nn2, nn1);
+
+        let mut Y = d2;
+        let mut K = kk;
+
+        while Y>0 {
+            let U = prng.draw();
+            Y = Y - (U + Y as f64 /(d1+K) as f64).floor() as u64;
+            K = K - 1;
+            if K == 0 {
+                break;
+            }
+        }
+
+        let Z = (d2 - Y) as u64;
+
+        if nn1 > nn2 {
+            kk - Z
+        } else {
+            Z
+        }
+    }
+
+    fn hrua(kk:u64, nn1:u64, nn2:u64, prng: &mut Prng) -> u64 {
+        const D1:f64 = 1.7155277699214135;
+        const D2:f64 = 0.8989161620588988;
+
+        let mut Z: u64 = 0;
+
+        let mingoodbad = cmp::min(nn1, nn2);
+        let maxgoodbad = cmp::max(nn1, nn2);
+        let popsize = nn1+nn2;
+        let m = cmp::min(kk, popsize - kk);
+
+        let d4 = (mingoodbad/popsize) as f64;
+        let d5 = 1.0 - d4;
+        let d6 = m as f64 * d4 + 0.5;
+        let d7 = ( (popsize - m) as f64 * kk as f64 * d4 * d5 / (popsize -1) as f64 +0.5).sqrt();
+        let d8 = D1 * d7 + D2;
+        let d9 = ((m+1)*(mingoodbad+1)/(popsize +2));
+        let d10 = loggam(d9+1) + loggam(mingoodbad-d9+1) + loggam(m-d9+1) + loggam(maxgoodbad -m +d9+1);
+        let d11 = cmp::min(cmp::min(m, mingoodbad), (d6+16.0*d7).floor() as u64);
+
+
+        loop {
+            let X = prng.draw();
+            let Y = prng.draw();
+            let W = d6 + d8 * (Y -0.5)/X;
+
+            if W < 0.0 || W >= d11 as f64 {
+                continue;
+            }
+
+            let Z = W.floor() as u64;
+            let T = d10 - (loggam(Z+1) + loggam(mingoodbad - Z + 1) + loggam(m -Z+1)
+                + loggam(maxgoodbad - m + Z +1));
+
+            if (X * (4.0-X) -3.0) <= T {
+                break;
+            }
+
+            if X * (X-T) >= 1.0 {
+                continue;
+            }
+
+            if 2.0 * X.ln() <= T {
+                break;
+            }
+        }
+
+        if nn1 > nn2 {
+            Z = m - Z;
+        }
+
+        if m < kk {
+            Z = nn1 -Z
+        }
+
+        Z
+    }
+    use std::f64::consts;
+
+    fn loggam(x:u64) -> f64 {
+
+        let a: Vec<f64> = vec![
+            8.333333333333333e-02, -2.777777777777778e-03,
+            7.936507936507937e-04, -5.952380952380952e-04,
+            8.417508417508418e-04, -1.917526917526918e-03,
+            6.410256410256410e-03, -2.955065359477124e-02,
+            1.796443723688307e-01, -1.39243221690590e+00];
+
+
+        let mut x0 = x as f64;
+        let mut n:u64 = 0;
+
+        if x == 1 || x == 2 {
+            return 0.0;
+        } else if x <= 7 {
+            let n = (7 - x);
+            x0 = (x + n) as f64;
+        }
+
+        let x2 = 1.0 / (x0*x0);
+        let xp = 2.0 * consts::PI;
+        let mut gl0 = a[9];
+
+
+        for v in (0..8).rev() {
+            gl0 = gl0 * x2;
+            gl0 = gl0 + a[v];
+        }
+
+        let mut gl = gl0/x0 as f64 + 0.5 * (xp as f64).ln() + (x0-0.5) * x0.ln() - x0;
+
+        if x <= 7 {
+            for i in (1..n+1) {
+                gl = gl - (x0 as f64 - 1.0).ln();
+                x0 = x0 - 1.0;
+            }
+        }
+        gl
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // rand - cryptographic random; uses range 0-1
-    fn _rand(rng: &mut ThreadRng) -> f64 {
-        let range = Uniform::new(0.0f64, 1.0f64);
-        range.sample(rng)
+    fn _rand(rng: &mut Prng) -> f64 {
+        rng.draw()
     }
 
     #[test]
     fn _test_rand() {
-        let mut rng = thread_rng();
+        /*
+        let seed: Vec<u8> = vec![255, 255, 255, 255];
+        let mut rng = Prng::new(&seed);
         let result = _rand(&mut rng);
+        assert!(result == 1.0);
+
+        let seed: Vec<u8> = vec![0, 0, 0, 0];
+        let mut rng = Prng::new(&seed);
+        let result = _rand(&rng);
+        assert!(result == 0.0);
+
+        let seed: Vec<u8> = vec![0, 0, 0, 42];
+        let rng = Prng::new(&seed);
+        let result = _rand(&rng);
         assert!(result >=0.0 && result <=1.0);
+        */
     }
 }
 

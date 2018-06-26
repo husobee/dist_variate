@@ -5,3 +5,4 @@ authors = ["Ben <husobee> Huson <husobee@e-ie.io>"]
 
 [dependencies]
 rand = "0.5"
+rust-crypto = "^0.2"
